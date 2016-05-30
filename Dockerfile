@@ -15,7 +15,7 @@ ADD module /tmp
 #ARG _RESTY_CONFIG_DEPS="--with-openssl=/usr/local/openssl-${RESTY_OPENSSL_VERSION} --with-pcre=/tmp/pcre-${RESTY_PCRE_VERSION}"
 #安装依赖库
 ADD drizzle7-2011.07.21 /tmp
-ADD gperftools-2.2.1 /tmp
+ADD gperftools-2.0 /tmp
 ADD libunwind-0.99-beta/ /tmp
 ADD lloyd-yajl-2.0.1-0-gf4b2b1a /tmp
 RUN \
@@ -75,7 +75,7 @@ RUN \
     && ln -s /usr/local/lib/libyajl.so.2 /usr/lib64/libyajl.so.2 \
 #	安装google-perftools
   # && tar zxvf gperftools-2.2.1.tar.gz \
-    && cd gperftools-2.2.1 \
+    && cd gperftools-2.0 \
     && ./configure --enable-shared --enable-frame-pointers \
    # && chmod +x /tmp/gperftools-2.2.1/src/base/linuxthreads.cc \
    # && sed -i "s/siginfo\_t/siginfo/g" /tmp/gperftools-2.2.1/src/base/linuxthreads.cc \
