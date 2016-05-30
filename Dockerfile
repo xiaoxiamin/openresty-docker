@@ -17,7 +17,7 @@ ADD module /tmp
 ADD drizzle7-2011.07.21 /tmp
 ADD gperftools-2.0 /tmp
 ADD libunwind-0.99-beta/ /tmp
-ADD lloyd-yajl-2.0.1-0-gf4b2b1a /tmp
+ADD lloyd-yajl-gf4b2b1a /tmp
 RUN \
      yum install -y \
 	pcre-devel \
