@@ -5,7 +5,7 @@ ARG RESTY_VERSION="1.9.7.4"
 ARG RESTY_OPENSSL_VERSION="1.0.2e"
 ARG RESTY_PCRE_VERSION="8.38"
 #ARG RESTY_J="1"
-ARG RESTY_CONFIG_OPTIONS="./configure --user=www --group=www --prefix=/usr/local/openresty --conf-path=/etc/openresty/nginx.conf --pid-path=/var/run/nginx.pid --error-log-path=/var/log/nginx/error.log --with-luajit --with-http_flv_module --with-http_gzip_static_module --with-http_mp4_module --with-http_image_filter_module --with-http_stub_status_module --with-http_ssl_module --with-http_realip_module --with-debug --with-http_geoip_module --with-http_drizzle_module --with-http_iconv_module --add-module=../module/nginx_concat_module --add-module=../module/nginx_mogilefs_module-1.0.4 --add-module=../module/nginx-rtmp-module-master --add-module=../module/ngx_cache_purge-1.6 --add-module=../module/ngx_mongo-master --add-module=../module/fastdfs-nginx-module/src"
+ARG RESTY_CONFIG_OPTIONS="./configure --user=www --group=www --prefix=/usr/local/openresty --conf-path=/etc/openresty/nginx.conf --pid-path=/var/run/nginx.pid --error-log-path=/var/log/nginx/error.log --with-luajit --with-http_flv_module --with-google_perftools_module --with-http_gzip_static_module --with-http_mp4_module --with-http_image_filter_module --with-http_stub_status_module --with-http_ssl_module --with-http_realip_module --with-debug --with-http_geoip_module --with-http_drizzle_module --with-http_iconv_module --add-module=../module/nginx_concat_module --add-module=../module/nginx_mogilefs_module-1.0.4 --add-module=../module/nginx-rtmp-module-master --add-module=../module/ngx_cache_purge-1.6 --add-module=../module/ngx_mongo-master --add-module=../module/fastdfs-nginx-module/src"
 ADD module /tmp 
 # 1) Install yum dependencies
 # 2) Download and untar OpenSSL, PCRE, and OpenResty
@@ -18,6 +18,7 @@ ADD drizzle7-2011.07.21 /tmp
 ADD gperftools-2.0 /tmp
 ADD libunwind-0.99-beta/ /tmp
 ADD lloyd-yajl-f4b2b1a /tmp
+ADD openssl-1.0.0d /tmp
 RUN \
      yum install -y \
 	pcre-devel \
@@ -39,7 +40,7 @@ RUN \
 #安装openssl
   #  && curl -fSL https://www.openssl.org/source/openssl-${RESTY_OPENSSL_VERSION}.tar.gz -o openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
   # && tar xzf openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
-    && cd openssl-${RESTY_OPENSSL_VERSION} \
+    && cd openssl-1.0.0d \
     && ./config --prefix=/usr/local/openssl \
    && make \
     && make install \
@@ -98,8 +99,7 @@ RUN \
     && gmake install \
     && cd /tmp \
     && rm -rf \
-        openssl-${RESTY_OPENSSL_VERSION} \
-        openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
+        openssl-1.0.0d \
         openresty-${RESTY_VERSION}.tar.gz openresty-${RESTY_VERSION} \
         pcre-${RESTY_PCRE_VERSION}.tar.gz pcre-${RESTY_PCRE_VERSION} \
  #       gperftools-2.0.tar.gz gperftools-2.0 \
