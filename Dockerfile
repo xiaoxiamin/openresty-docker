@@ -14,10 +14,10 @@ ADD module /tmp
 # These are not intended to be user-specified
 #ARG _RESTY_CONFIG_DEPS="--with-openssl=/usr/local/openssl-${RESTY_OPENSSL_VERSION} --with-pcre=/tmp/pcre-${RESTY_PCRE_VERSION}"
 #安装依赖库
-COPY drizzle7-2011.07.21 /tmp
-COPY gperftools-2.2.1.tar.gz /tmp
-COPY libunwind-0.99-beta.tar.gz/ /tmp
-COPY lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz /tmp
+ADD drizzle7-2011.07.21 /tmp
+ADD gperftools-2.2.1 /tmp
+ADD libunwind-0.99-beta/ /tmp
+ADD lloyd-yajl-2.0.1-0-gf4b2b1a /tmp
 RUN \
      yum install -y \
 	pcre-devel \
@@ -37,16 +37,16 @@ RUN \
 	cmake \
     && cd /tmp \
 #安装openssl
-    && curl -fSL https://www.openssl.org/source/openssl-${RESTY_OPENSSL_VERSION}.tar.gz -o openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
-   && tar xzf openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
+  #  && curl -fSL https://www.openssl.org/source/openssl-${RESTY_OPENSSL_VERSION}.tar.gz -o openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
+  # && tar xzf openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
     && cd openssl-${RESTY_OPENSSL_VERSION} \
     && ./config --prefix=/usr/local/openssl \
    && make \
     && make install \
     && cd /tmp \
 #安装drizzle-lib1.0
-    && wget http://agentzh.org/misc/nginx/drizzle7-2011.07.21.tar.gz \
-    && tar zxvf drizzle7-2011.07.21.tar.gz \
+   # && wget http://agentzh.org/misc/nginx/drizzle7-2011.07.21.tar.gz \
+   # && tar zxvf drizzle7-2011.07.21.tar.gz \
     && cd drizzle7-2011.07.21 \
     && ./configure --without-server \
     && make libdrizzle-1.0 \
@@ -55,7 +55,7 @@ RUN \
     && ln -s /usr/local/lib/libdrizzle.so.1 /usr/lib/libdrizzle.so.1 \
     && ln -s /usr/local/lib/libdrizzle.so.1 /usr/lib64/libdrizzle.so.1 \
      # 安装libunwind-0.99
-   && tar zxvf libunwind-0.99-beta.tar.gz \
+  # && tar zxvf libunwind-0.99-beta.tar.gz \
     && cd libunwind-0.99-beta \
     && ./configure \
     && make \
@@ -64,8 +64,8 @@ RUN \
     && ldconfig \
     && cd /tmp \
 	#安装yajl
-    && wget http://pkgs.fedoraproject.org/repo/pkgs/yajl/lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz/df6a751e7797b9c2182efd91b5d64017/lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz \
-    && tar zxvf lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz \
+   # && wget http://pkgs.fedoraproject.org/repo/pkgs/yajl/lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz/df6a751e7797b9c2182efd91b5d64017/lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz \
+   # && tar zxvf lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz \
     && cd lloyd-yajl-f4b2b1a \
     && ./configure \
     && gmake \
@@ -74,7 +74,7 @@ RUN \
     && ln -s /usr/local/lib/libyajl.so.2 /usr/lib/libyajl.so.2 \
     && ln -s /usr/local/lib/libyajl.so.2 /usr/lib64/libyajl.so.2 \
 #	安装google-perftools
-   && tar zxvf gperftools-2.2.1.tar.gz \
+  # && tar zxvf gperftools-2.2.1.tar.gz \
     && cd gperftools-2.2.1 \
     && ./configure --enable-shared --enable-frame-pointers \
    # && chmod +x /tmp/gperftools-2.2.1/src/base/linuxthreads.cc \
