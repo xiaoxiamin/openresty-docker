@@ -1,0 +1,11 @@
+--- configure    2011-07-06 21:17:11.000000000 +0800
++++ configure-patched    2012-02-27 14:46:39.435704695 +0800
+@@ -7921,7 +7921,7 @@
+   cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+ /* end confdefs.h.  */
+ 
+-#if !defined(__GNUC__) || (__GNUC__ < 4) || ((__GNUC__ >= 4) && (__GNUC_MINOR__ < 2))
++#if !defined(__GNUC__) || (__GNUC__ < 4)
+ # error GCC is Too Old!
+ #endif
+
