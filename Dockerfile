@@ -14,10 +14,10 @@ ADD module /tmp
 # These are not intended to be user-specified
 #ARG _RESTY_CONFIG_DEPS="--with-openssl=/usr/local/openssl-${RESTY_OPENSSL_VERSION} --with-pcre=/tmp/pcre-${RESTY_PCRE_VERSION}"
 #安装依赖库
-#COPY drizzle7-2011.07.21.tar.gz /tmp
-#COPY gperftools-2.2.1.tar.gz /tmp
-#COPY libunwind-0.99-beta.tar.gz/ /tmp
-# COPY lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz /tmp
+COPY drizzle7-2011.07.21.tar.gz /tmp
+COPY gperftools-2.2.1.tar.gz /tmp
+COPY libunwind-0.99-beta.tar.gz/ /tmp
+COPY lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz /tmp
 RUN \
      yum install -y \
 	pcre-devel \
