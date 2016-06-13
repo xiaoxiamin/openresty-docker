@@ -32,7 +32,7 @@ RUN \
     && cd /tmp \
     && wget http://pkgs.fedoraproject.org/repo/pkgs/yajl/lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz/df6a751e7797b9c2182efd91b5d64017/lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz \
     && tar zxvf lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz \
-    && cd lloyd-yajl-xxx \
+    && cd lloyd-yajl-f4b2b1a \
     && ./configure \
     && make \
     && make install \
