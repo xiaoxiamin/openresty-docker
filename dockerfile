@@ -3,7 +3,7 @@ FROM centos7:latest
 ARG RESTY_VERSION="1.9.7.4"
 ARG RESTY_OPENSSL_VERSION="1.0.2e"
 ARG RESTY_PCRE_VERSION="8.38"
-ARG RESTY_CONFIG_OPTIONS="./configure --user=www --group=www --prefix=/usr/local/openresty --conf-path=/etc/openresty/nginx.conf --pid-path=/var/run/nginx.pid --error-log-path=/var/log/nginx/error.log --with-luajit --with-http_flv_module --with-http_gzip_static_module --with-http_mp4_module --with-http_image_filter_module --with-http_stub_status_module --with-http_ssl_module --with-http_realip_module --with-debug --with-http_geoip_module --with-http_drizzle_module --with-http_iconv_module --add-module=../module/nginx_concat_module --add-module=../module/nginx_mogilefs_module-1.0.4 --add-module=../module/nginx-rtmp-module-master --add-module=../module/ngx_cache_purge-1.6 --add-module=../module/ngx_mongo-master --add-module=../module/fastdfs-nginx-module/src"
+ARG RESTY_CONFIG_OPTIONS="--user=www --group=www --prefix=/usr/local/openresty --conf-path=/etc/openresty/nginx.conf --pid-path=/var/run/nginx.pid --error-log-path=/var/log/nginx/error.log --with-luajit --with-http_flv_module --with-http_gzip_static_module --with-http_mp4_module --with-http_image_filter_module --with-http_stub_status_module --with-http_ssl_module --with-http_realip_module --with-debug --with-http_geoip_module --with-http_drizzle_module --with-http_iconv_module --add-module=../module/nginx_concat_module --add-module=../module/nginx_mogilefs_module-1.0.4 --add-module=../module/nginx-rtmp-module-master --add-module=../module/ngx_cache_purge-1.6 --add-module=../module/ngx_mongo-master --add-module=../module/fastdfs-nginx-module/src"
 RUN yum install -y readline readline-devel GeoIP GeoIP-devel ruby intltool libcurl-devel
 COPY module /tmp 
 #安装依赖库
