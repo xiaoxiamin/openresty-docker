@@ -1,4 +1,54 @@
 
+Version 1.18  2016-02-24
+ * bug fixed: do NOT use header_only field of request,
+   use method field instead
+
+Version 1.17  2014-11-22
+ * change include path of fastcommon and fastdfs
+   you must upgrade your FastDFS server to v5.04
+   or higher version
+
+Version 1.16  2014-05-04
+ * mod_fastdfs.conf remove parameter: http.need_find_content_type
+ * bug fixed: remove flv duplicate start variable define
+ * flv support end parameter
+ * bug fixed: in function proxy_create_request, use r->unparsed_uri
+   when r->valid_unparsed_uri is true, otherwise use r->uri and r->args
+
+Version 1.15  2013-01-13
+ * add storage server port config with multi groups
+ * support flv, you must upgrade your FastDFS server to v4.06
+   or higher version
+
+Version 1.14  2012-12-29
+ * bug fixed: do not check store path index when not same group
+   you must upgrade your FastDFS server to v4.05 or higher version
+ * proxy handler deal headers more gracefully
+ * set last modified time correctly
+ * support multi groups
+
+Version 1.13  2012-11-14
+ * support filename include storage server ID
+   must upgrade your FastDFS server to v4.03 or higher version
+ * call function fdfs_mod_init change from ngx_http_fastdfs_set to 
+   ngx_http_fastdfs_process_init
+
+Version 1.12  2012-10-20
+ * log detail error info when stat file fail
+ * mod_fastdfs.conf add parameter: load_fdfs_parameters_from_tracker, 
+   not load parameters from the FDFS tracker server by default
+
+Version 1.11  2012-08-27
+ * add more debug info
+ * use nginx error page when HTTP status is not ok
+
+Version 1.10  2012-01-03
+ * use r->uri and r->args instead of r->unparsed_uri to support 
+   rewrite correctly
+
+Version 1.09  2011-11-26
+ * bug fixed: correct HTTP status when nginx send file with range
+
 Version 1.08  2011-08-21
  * add store path count in startup log info
  * support HTTP range

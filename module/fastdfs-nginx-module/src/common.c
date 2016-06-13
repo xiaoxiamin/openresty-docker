@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <time.h>
+#include <unistd.h>
 #include "fdfs_define.h"
 #include "logger.h"
 #include "shared_func.h"
@@ -26,31 +27,123 @@
 #include "fdfs_http_shared.h"
 #include "fdfs_client.h"
 #include "local_ip_func.h"
+#include "fdfs_shared_func.h"
 #include "trunk_shared.h"
 #include "common.h"
 
 #define FDFS_MOD_REPONSE_MODE_PROXY	'P'
 #define FDFS_MOD_REPONSE_MODE_REDIRECT	'R'
 
+static char  flv_header[] = "FLV\x1\x1\0\0\0\x9\0\0\0\x9";
+
+typedef struct tagGroupStorePaths {
+	char group_name[FDFS_GROUP_NAME_MAX_LEN + 1];
+	int group_name_len;
+	int storage_server_port;
+	FDFSStorePaths store_paths;
+} GroupStorePaths;
+
 static int storage_server_port = FDFS_STORAGE_SERVER_DEF_PORT;
-static int group_name_len = 0;
+static int my_group_name_len = 0;
+static int group_count = 0;  //for multi groups
 static bool url_have_group_name = false;
-static char group_name[FDFS_GROUP_NAME_MAX_LEN + 1] = {0};
+static bool use_storage_id = false;
+static bool flv_support = false;  //if support flv
+static char flv_extension[FDFS_FILE_EXT_NAME_MAX_LEN + 1] = {0};  //flv extension name
+static int  flv_ext_len = 0;  //flv extension length
+static char my_group_name[FDFS_GROUP_NAME_MAX_LEN + 1] = {0};
 static char response_mode = FDFS_MOD_REPONSE_MODE_PROXY;
+static GroupStorePaths *group_store_paths = NULL;   //for multi groups
 static FDFSHTTPParams g_http_params;
 static int storage_sync_file_max_delay = 24 * 3600;
 
 static int fdfs_get_params_from_tracker();
 static int fdfs_format_http_datetime(time_t t, char *buff, const int buff_size);
 
+static int fdfs_strtoll(const char *s, int64_t *value)
+{
+	char *end = NULL;
+	*value = strtoll(s, &end, 10);
+	if (end != NULL && *end != '\0')
+	{
+		return EINVAL;
+	}
+
+	return 0;
+}
+
+static int fdfs_load_groups_store_paths(IniContext *pItemContext)
+{
+	char section_name[64];
+	char *pGroupName;
+	int bytes;
+	int result;
+	int i;
+
+	bytes = sizeof(GroupStorePaths) * group_count;
+	group_store_paths = (GroupStorePaths *)malloc(bytes);
+	if (group_store_paths == NULL)
+	{
+		logError("file: "__FILE__", line: %d, " \
+			"malloc %d bytes fail, " \
+			"errno: %d, error info: %s", \
+			__LINE__, bytes, errno, STRERROR(errno));
+		return errno != 0 ? errno : ENOMEM;
+	}
+
+	for (i=0; i<group_count; i++)
+	{
+		sprintf(section_name, "group%d", i + 1);
+		pGroupName = iniGetStrValue(section_name, "group_name", \
+				pItemContext);
+		if (pGroupName == NULL)
+		{
+			logError("file: "__FILE__", line: %d, " \
+				"section: %s, you must set parameter: " \
+				"group_name!", __LINE__, section_name);
+			return ENOENT;
+		}
+
+		group_store_paths[i].storage_server_port = iniGetIntValue( \
+			section_name, "storage_server_port", pItemContext, \
+			FDFS_STORAGE_SERVER_DEF_PORT);
+
+		group_store_paths[i].group_name_len = snprintf( \
+			group_store_paths[i].group_name, \
+			sizeof(group_store_paths[i].group_name), \
+			"%s", pGroupName);
+		if (group_store_paths[i].group_name_len == 0)
+		{
+			logError("file: "__FILE__", line: %d, " \
+				"section: %s, parameter: group_name " \
+				"can't be empty!", __LINE__, section_name);
+			return EINVAL;
+		}
+		
+		group_store_paths[i].store_paths.paths = \
+			storage_load_paths_from_conf_file_ex(pItemContext, \
+			section_name, false, &group_store_paths[i].store_paths.count, \
+			&result);
+		if (result != 0)
+		{
+			return result;
+		}
+	}
+
+	return 0;
+}
+
 int fdfs_mod_init()
 {
         IniContext iniContext;
 	int result;
+	int len;
+	int i;
 	char *pLogFilename;
 	char *pReponseMode;
-	char *pGroupName;
 	char *pIfAliasPrefix;
+	char buff[2 * 1024];
+	bool load_fdfs_parameters_from_tracker = false;
 
 	log_init();
 	trunk_shared_init();
@@ -65,9 +158,65 @@ int fdfs_mod_init()
 
 	do
 	{
-	if ((result=storage_load_paths_from_conf_file(&iniContext)) != 0)
+	group_count = iniGetIntValue(NULL, "group_count", &iniContext, 0);
+	if (group_count < 0)
 	{
-		break;
+		logError("file: "__FILE__", line: %d, " \
+			"conf file: %s, group_count: %d is invalid!", \
+			__LINE__, FDFS_MOD_CONF_FILENAME, group_count);
+		return EINVAL;
+	}
+
+	url_have_group_name = iniGetBoolValue(NULL, "url_have_group_name", \
+						&iniContext, false);
+	if (group_count > 0)
+	{
+		if (!url_have_group_name)
+		{
+			logError("file: "__FILE__", line: %d, "   \
+				"config file: %s, you must set "  \
+				"url_have_group_name to true to " \
+				"support multi-group!", \
+				__LINE__, FDFS_MOD_CONF_FILENAME);
+			result = ENOENT;
+			break;
+		}
+
+		if ((result=fdfs_load_groups_store_paths(&iniContext)) != 0)
+		{
+			break;
+		}
+	}
+	else
+	{
+		char *pGroupName;
+
+		pGroupName = iniGetStrValue(NULL, "group_name", &iniContext);
+		if (pGroupName == NULL)
+		{
+			logError("file: "__FILE__", line: %d, " \
+				"config file: %s, you must set parameter: " \
+				"group_name!", __LINE__, FDFS_MOD_CONF_FILENAME);
+			result = ENOENT;
+			break;
+		}
+
+		my_group_name_len = snprintf(my_group_name, \
+				sizeof(my_group_name), "%s", pGroupName);
+		if (my_group_name_len == 0)
+		{
+			logError("file: "__FILE__", line: %d, " \
+				"config file: %s, parameter: group_name " \
+				"can't be empty!", __LINE__, \
+				FDFS_MOD_CONF_FILENAME);
+			result = EINVAL;
+			break;
+		}
+
+		if ((result=storage_load_paths_from_conf_file(&iniContext)) != 0)
+		{
+			break;
+		}
 	}
 
 	g_fdfs_connect_timeout = iniGetIntValue(NULL, "connect_timeout", \
@@ -95,36 +244,8 @@ int fdfs_mod_init()
 		}
 	}
 
-	result = fdfs_load_tracker_group_ex(&g_tracker_group, \
-			FDFS_MOD_CONF_FILENAME, &iniContext);
-	if (result != 0)
-	{
-		break;
-	}
-
 	storage_server_port = iniGetIntValue(NULL, "storage_server_port", \
 			&iniContext, FDFS_STORAGE_SERVER_DEF_PORT);
-
-	url_have_group_name = iniGetBoolValue(NULL, "url_have_group_name", \
-						&iniContext, false);
-	pGroupName = iniGetStrValue(NULL, "group_name", &iniContext);
-	if (pGroupName == NULL)
-	{
-		logError("file: "__FILE__", line: %d, " \
-			"you must set parameter: group_name!", __LINE__);
-		result = ENOENT;
-		break;
-	}
-
-	group_name_len = snprintf(group_name, sizeof(group_name), \
-				"%s", pGroupName);
-	if (group_name_len == 0)
-	{
-		logError("file: "__FILE__", line: %d, " \
-			"parameter: group_name can't be empty!", __LINE__);
-		result = EINVAL;
-		break;
-	}
 
 	if ((result=fdfs_http_params_load(&iniContext, FDFS_MOD_CONF_FILENAME, \
 		&g_http_params)) != 0)
@@ -152,7 +273,47 @@ int fdfs_mod_init()
 			"%s", pIfAliasPrefix);
 	}
 
+	load_fdfs_parameters_from_tracker = iniGetBoolValue(NULL, \
+				"load_fdfs_parameters_from_tracker", \
+				&iniContext, false);
+	if (load_fdfs_parameters_from_tracker)
+	{
+		result = fdfs_load_tracker_group_ex(&g_tracker_group, \
+				FDFS_MOD_CONF_FILENAME, &iniContext);
+	}
+	else
+	{
+		storage_sync_file_max_delay = iniGetIntValue(NULL, \
+				"storage_sync_file_max_delay", \
+                	        &iniContext, 24 * 3600);
+		use_storage_id = iniGetBoolValue(NULL, "use_storage_id", \
+				&iniContext, false);
+		if (use_storage_id)
+		{
+			result = fdfs_load_storage_ids_from_file( \
+					FDFS_MOD_CONF_FILENAME, &iniContext);
+		}
+	}
+
 	} while (false);
+
+	flv_support = iniGetBoolValue(NULL, "flv_support", \
+					&iniContext, false);
+	if (flv_support)
+	{
+		char *flvExtension;
+		flvExtension = iniGetStrValue (NULL, "flv_extension", \
+					&iniContext);
+		if (flvExtension == NULL)
+		{
+			flv_ext_len = sprintf(flv_extension, "flv");
+		}
+		else
+		{
+			flv_ext_len = snprintf(flv_extension, \
+				sizeof(flv_extension), "%s", flvExtension);
+		}
+	}
 
 	iniFreeContext(&iniContext);
 	if (result != 0)
@@ -161,42 +322,83 @@ int fdfs_mod_init()
 	}
 
 	load_local_host_ip_addrs();
-	fdfs_get_params_from_tracker();
-	
-	logInfo("fastdfs apache / nginx module v1.08, " \
+	if (load_fdfs_parameters_from_tracker)
+	{
+		fdfs_get_params_from_tracker();
+	}
+
+	if (group_count > 0)
+	{
+		len = sprintf(buff, "group_count=%d, ", group_count);
+	}
+	else
+	{
+		len = sprintf(buff, "group_name=%s, storage_server_port=%d, " \
+			"path_count=%d, ", my_group_name, \
+			storage_server_port, g_fdfs_store_paths.count);
+		for (i=0; i<g_fdfs_store_paths.count; i++)
+		{
+			len += snprintf(buff + len, sizeof(buff) - len, \
+				"store_path%d=%s, ", i, \
+				g_fdfs_store_paths.paths[i]);
+		}
+	}
+
+	logInfo("fastdfs apache / nginx module v1.15, " \
 		"response_mode=%s, " \
 		"base_path=%s, " \
-		"path_count=%d, " \
+		"url_have_group_name=%d, " \
+		"%s" \
 		"connect_timeout=%d, "\
 		"network_timeout=%d, "\
 		"tracker_server_count=%d, " \
-		"storage_server_port=%d, " \
-		"group_name=%s, " \
 		"if_alias_prefix=%s, " \
 		"local_host_ip_count=%d, " \
-		"need_find_content_type=%d, " \
-		"default_content_type=%s, " \
 		"anti_steal_token=%d, " \
 		"token_ttl=%ds, " \
 		"anti_steal_secret_key length=%d, "  \
 		"token_check_fail content_type=%s, " \
 		"token_check_fail buff length=%d, "  \
-		"storage_sync_file_max_delay=%ds", \
+		"load_fdfs_parameters_from_tracker=%d, " \
+		"storage_sync_file_max_delay=%ds, " \
+		"use_storage_id=%d, storage server id count=%d, " \
+		"flv_support=%d, flv_extension=%s", \
 		response_mode == FDFS_MOD_REPONSE_MODE_PROXY ? \
 			"proxy" : "redirect", \
-		g_fdfs_base_path, g_fdfs_path_count, g_fdfs_connect_timeout, \
-		g_fdfs_network_timeout, g_tracker_group.server_count, \
-		storage_server_port, group_name, \
+		g_fdfs_base_path, url_have_group_name, buff, \
+		g_fdfs_connect_timeout, g_fdfs_network_timeout, \
+		g_tracker_group.server_count, \
 		g_if_alias_prefix, g_local_host_ip_count, \
-		g_http_params.need_find_content_type, \
-		g_http_params.default_content_type, \
 		g_http_params.anti_steal_token, \
 		g_http_params.token_ttl, \
 		g_http_params.anti_steal_secret_key.length, \
 		g_http_params.token_check_fail_content_type, \
 		g_http_params.token_check_fail_buff.length, \
-		storage_sync_file_max_delay);
+		load_fdfs_parameters_from_tracker, \
+		storage_sync_file_max_delay, use_storage_id, \
+		g_storage_id_count, flv_support, flv_extension);
 
+	if (group_count > 0)
+	{
+		int k;
+		for (k=0; k<group_count; k++)
+		{
+			len = 0;
+			*buff = '\0';
+			for (i=0; i<group_store_paths[k].store_paths.count; i++)
+			{
+				len += snprintf(buff + len, sizeof(buff) - len, \
+					", store_path%d=%s", i, \
+					group_store_paths[k].store_paths.paths[i]);
+			}
+
+			logInfo("group %d. group_name=%s, " \
+				"storage_server_port=%d, path_count=%d%s", \
+				k + 1, group_store_paths[k].group_name, \
+				storage_server_port, group_store_paths[k]. \
+				store_paths.count, buff);
+		}
+	}
 	//print_local_host_ip_addrs();
 
 	return 0;
@@ -306,6 +508,31 @@ static int fdfs_check_and_format_range(struct fdfs_http_range *range,
 	return 0;
 }
 
+#define FDFS_SET_LAST_MODIFIED(response, pContext, mtime) \
+	do { \
+		response.last_modified = mtime; \
+		fdfs_format_http_datetime(response.last_modified, \
+			response.last_modified_buff, \
+			sizeof(response.last_modified_buff)); \
+		if (*pContext->if_modified_since != '\0') \
+		{ \
+			if (strcmp(response.last_modified_buff, \
+				pContext->if_modified_since) == 0) \
+			{ \
+			OUTPUT_HEADERS(pContext, (&response), HTTP_NOTMODIFIED)\
+			return HTTP_NOTMODIFIED; \
+			} \
+		} \
+		\
+		/*\
+		logInfo("last_modified: %s, if_modified_since: %s, strcmp=%d", \
+			response.last_modified_buff, \
+			pContext->if_modified_since, \
+			strcmp(response.last_modified_buff, \
+			pContext->if_modified_since)); \
+		*/ \
+	} while (0)
+
 int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 {
 #define HTTPD_MAX_PARAMS   32
@@ -315,13 +542,17 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	char uri[256];
 	int url_len;
 	int uri_len;
-	KeyValuePair params[HTTPD_MAX_PARAMS];
+	int flv_header_len;
 	int param_count;
+	int ext_len;
+	KeyValuePair params[HTTPD_MAX_PARAMS];
 	char *p;
 	char *filename;
+	const char *ext_name;
+	FDFSStorePaths *pStorePaths;
 	char true_filename[128];
 	char full_filename[MAX_PATH_SIZE + 64];
-	char content_type[64];
+	//char content_type[64];
 	char file_trunk_buff[FDFS_OUTPUT_CHUNK_SIZE];
 	struct stat file_stat;
 	int64_t file_offset;
@@ -335,13 +566,13 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	int fd;
 	int result;
 	int http_status;
+	int the_storage_port;
 	struct fdfs_http_response response;
 	FDFSFileInfo file_info;
 	bool bFileExists;
 	bool bSameGroup;  //if in my group
 	bool bTrunkFile;
 	FDFSTrunkFullInfo trunkInfo;
-        FDFSTrunkHeader trunkHeader;
 
 	memset(&response, 0, sizeof(response));
 	response.status = HTTP_OK;
@@ -397,9 +628,12 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 		memcpy(uri, url, uri_len+1);
 	}
 
+	the_storage_port = storage_server_port;
 	param_count = http_parse_query(uri, params, HTTPD_MAX_PARAMS);
 	if (url_have_group_name)
 	{
+		int group_name_len;
+
 		snprintf(file_id, sizeof(file_id), "%s", uri + 1);
 		file_id_without_group = strchr(file_id, '/');
 		if (file_id_without_group == NULL)
@@ -410,17 +644,44 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 			return HTTP_BADREQUEST;
 		}
 
-		bSameGroup = (file_id_without_group - file_id == \
-				group_name_len) && (memcmp(file_id, group_name,\
+		pStorePaths = &g_fdfs_store_paths;
+		group_name_len = file_id_without_group - file_id;
+		if (group_count == 0)
+		{
+			bSameGroup = (group_name_len == my_group_name_len) && \
+					(memcmp(file_id, my_group_name, \
 						group_name_len) == 0);
+		}
+		else
+		{
+			int i;
+
+			bSameGroup = false;
+			for (i=0; i<group_count; i++)
+			{
+			if (group_store_paths[i].group_name_len == \
+				group_name_len && memcmp(file_id, \
+					group_store_paths[i].group_name, \
+					group_name_len) == 0)
+			{
+				the_storage_port = group_store_paths[i]. \
+						storage_server_port;
+				bSameGroup = true;
+				pStorePaths = &group_store_paths[i].store_paths;
+				break;
+			}
+			}
+		}
+
 		file_id_without_group++;  //skip /
 	}
 	else
 	{
+		pStorePaths = &g_fdfs_store_paths;
 		bSameGroup = true;
 		file_id_without_group = uri + 1; //skip /
 		snprintf(file_id, sizeof(file_id), "%s/%s", \
-			group_name, file_id_without_group);
+			my_group_name, file_id_without_group);
 	}
 
 	if (strlen(file_id_without_group) < 22)
@@ -462,8 +723,10 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 				__LINE__, uri, result, STRERROR(result));
 			if (*(g_http_params.token_check_fail_content_type))
 			{
-				response.content_length = g_http_params.token_check_fail_buff.length;
-				response.content_type = g_http_params.token_check_fail_content_type;
+				response.content_length = g_http_params. \
+						token_check_fail_buff.length;
+				response.content_type = g_http_params. \
+						token_check_fail_content_type;
 				OUTPUT_HEADERS(pContext, (&response), HTTP_OK)
 
 				pContext->send_reply_chunk(pContext->arg, 1, \
@@ -484,14 +747,28 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	filename_len = strlen(filename);
 
 	//logInfo("filename=%s", filename);
-
-	if (storage_split_filename_ex(filename, \
+	if (storage_split_filename_no_check(filename, \
 		&filename_len, true_filename, &store_path_index) != 0)
 	{
 		OUTPUT_HEADERS(pContext, (&response), HTTP_BADREQUEST)
 		return HTTP_BADREQUEST;
 	}
-	
+	if (bSameGroup)
+	{
+		if (store_path_index < 0 || \
+			store_path_index >= pStorePaths->count)
+		{
+			logError("file: "__FILE__", line: %d, " \
+				"filename: %s is invalid, " \
+				"invalid store path index: %d, " \
+				"which < 0 or >= %d", __LINE__, filename, \
+				store_path_index, pStorePaths->count);
+
+			OUTPUT_HEADERS(pContext, (&response), HTTP_BADREQUEST)
+			return HTTP_BADREQUEST;
+		}
+	}
+
 	if (fdfs_check_data_filename(true_filename, filename_len) != 0)
 	{
 		OUTPUT_HEADERS(pContext, (&response), HTTP_BADREQUEST)
@@ -512,43 +789,50 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 		OUTPUT_HEADERS(pContext, (&response), http_status)
 		return http_status;
 	}
-
-	response.last_modified = file_info.create_timestamp;
-	fdfs_format_http_datetime(response.last_modified, \
-		response.last_modified_buff, \
-		sizeof(response.last_modified_buff));
-	if (*pContext->if_modified_since != '\0' && \
-		strcmp(response.last_modified_buff, \
-			pContext->if_modified_since) == 0)
+	
+	if (file_info.file_size >= 0)  //normal file
 	{
-		OUTPUT_HEADERS(pContext, (&response), HTTP_NOTMODIFIED)
-		return HTTP_NOTMODIFIED;
+		FDFS_SET_LAST_MODIFIED(response, pContext, \
+				file_info.create_timestamp);
 	}
-
-	/*
-	logError("last_modified: %s, if_modified_since: %s, strcmp=%d", \
-		response.last_modified_buff, pContext->if_modified_since, \
-		strcmp(response.last_modified_buff, pContext->if_modified_since));
-	*/
 
 	fd = -1;
 	memset(&file_stat, 0, sizeof(file_stat));
-	if (trunk_file_stat_ex(store_path_index, true_filename, filename_len, \
-			&file_stat, &trunkInfo, &trunkHeader, &fd) != 0)
+	if (bSameGroup)
 	{
-		bFileExists = false;
+        	FDFSTrunkHeader trunkHeader;
+		if ((result=trunk_file_stat_ex1(pStorePaths, store_path_index, \
+			true_filename, filename_len, &file_stat, \
+			&trunkInfo, &trunkHeader, &fd)) != 0)
+		{
+			bFileExists = false;
+		}
+		else
+		{
+			bFileExists = true;
+		}
 	}
 	else
 	{
-		bFileExists = true;
+		bFileExists = false;
+		memset(&trunkInfo, 0, sizeof(trunkInfo));
 	}
 
 	response.attachment_filename = fdfs_http_get_parameter("filename", \
 						params, param_count);
-	if (!bFileExists)
+	if (bFileExists)
+	{
+		if (file_info.file_size < 0)  //slave or appender file
+		{
+			FDFS_SET_LAST_MODIFIED(response, pContext, \
+					file_stat.st_mtime);
+		}
+	}
+	else
 	{
 		char *redirect;
 
+		//logInfo("source id: %d", file_info.source_id);
 		//logInfo("source ip addr: %s", file_info.source_ip_addr);
 		//logInfo("create_timestamp: %d", file_info.create_timestamp);
 
@@ -556,9 +840,44 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 			|| (file_info.create_timestamp > 0 && (time(NULL) - \
 			file_info.create_timestamp > storage_sync_file_max_delay))))
 		{
-			logError("file: "__FILE__", line: %d, " \
-				"logic file: %s not exists", \
-				__LINE__, filename);
+			if (IS_TRUNK_FILE_BY_ID(trunkInfo))
+			{
+				if (result == ENOENT)
+				{
+					logError("file: "__FILE__", line: %d, "\
+						"logic file: %s not exist", \
+						__LINE__, filename);
+				}
+				else
+				{
+					logError("file: "__FILE__", line: %d, "\
+						"stat logic file: %s fail, " \
+						"errno: %d, error info: %s", \
+						__LINE__, filename, result, \
+						STRERROR(result));
+				}
+			}
+			else
+			{
+				snprintf(full_filename, \
+					sizeof(full_filename), "%s/data/%s", \
+					pStorePaths->paths[store_path_index], \
+					true_filename);
+				if (result == ENOENT)
+				{
+					logError("file: "__FILE__", line: %d, "\
+						"file: %s not exist", \
+						__LINE__, full_filename);
+				}
+				else
+				{
+					logError("file: "__FILE__", line: %d, "\
+						"stat file: %s fail, " \
+						"errno: %d, error info: %s", \
+						__LINE__, full_filename, \
+						result, STRERROR(result));
+				}
+			}
 
 			OUTPUT_HEADERS(pContext, (&response), HTTP_NOTFOUND)
 			return HTTP_NOTFOUND;
@@ -574,6 +893,18 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 
 			OUTPUT_HEADERS(pContext, (&response), HTTP_BADREQUEST)
 			return HTTP_BADREQUEST;
+		}
+
+		if (*(file_info.source_ip_addr) == '\0')
+		{
+			logWarning("file: "__FILE__", line: %d, " \
+				"can't get ip address of source storage " \
+				"id: %d, url: %s", __LINE__, \
+				file_info.source_id, url);
+
+			OUTPUT_HEADERS(pContext, (&response), \
+				HTTP_INTERNAL_SERVER_ERROR)
+			return HTTP_INTERNAL_SERVER_ERROR;
 		}
 
 		if (response_mode == FDFS_MOD_REPONSE_MODE_REDIRECT)
@@ -635,10 +966,13 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 		}
 	}
 
+	ext_name = fdfs_http_get_file_extension(true_filename, \
+			filename_len, &ext_len);
+	/*
 	if (g_http_params.need_find_content_type)
 	{
 	if (fdfs_http_get_content_type_by_extname(&g_http_params, \
-		true_filename, content_type, sizeof(content_type)) != 0)
+		ext_name, ext_len, content_type, sizeof(content_type)) != 0)
 	{
 		if (fd >= 0)
 		{
@@ -649,6 +983,7 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	}
 	response.content_type = content_type;
 	}
+	*/
 
 	if (bFileExists)
 	{
@@ -681,6 +1016,7 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 		file_size = file_info.file_size;
 	}
 
+	flv_header_len = 0;
 	if (pContext->if_range)
 	{
 		if (fdfs_check_and_format_range(&(pContext->range), \
@@ -702,7 +1038,57 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	else
 	{
 		download_bytes = file_size > 0 ? file_size : 0;
+
+		//flv support
+		if (flv_support && (flv_ext_len == ext_len && \
+			memcmp(ext_name, flv_extension, ext_len) == 0))
+		{
+			char *pStart;
+			pStart = fdfs_http_get_parameter("start", \
+						params, param_count);
+			if (pStart != NULL)
+			{
+				int64_t start;
+				if (fdfs_strtoll(pStart, &start) == 0)
+				{
+					char *pEnd;
+
+					pContext->range.start = start;
+					pContext->range.end = 0;
+					pEnd = fdfs_http_get_parameter("end", \
+						params, param_count);
+					if (pEnd != NULL)
+					{
+						int64_t end;
+						if (fdfs_strtoll(pEnd, &end) == 0)
+						{
+							pContext->range.end = end - 1;
+						}
+					}
+
+					if (fdfs_check_and_format_range(&(pContext->range), \
+						file_size) != 0)
+					{
+						if (fd >= 0)
+						{
+							close(fd);
+						}
+
+						OUTPUT_HEADERS(pContext, (&response), HTTP_BADREQUEST)
+						return HTTP_BADREQUEST;
+					}
+
+					download_bytes = (pContext->range.end - pContext->range.start) + 1;
+					if (start > 0)
+					{
+						flv_header_len = sizeof(flv_header) - 1;
+					}
+				}
+			}
+		}
 	}
+
+	//logInfo("flv_header_len: %d", flv_header_len);
 
 	if (pContext->header_only)
 	{
@@ -710,7 +1096,7 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 		{
 			close(fd);
 		}
-		response.content_length = download_bytes;
+		response.content_length = download_bytes + flv_header_len;
 		OUTPUT_HEADERS(pContext, (&response), pContext->if_range ? \
 			HTTP_PARTIAL_CONTENT : HTTP_OK )
 
@@ -719,12 +1105,12 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 
 	if (!bFileExists)
 	{
-		TrackerServerInfo storage_server;
+		ConnectionInfo storage_server;
 		struct fdfs_download_callback_args callback_args;
 		int64_t file_size;
 
 		strcpy(storage_server.ip_addr, file_info.source_ip_addr);
-		storage_server.port = storage_server_port;
+		storage_server.port = the_storage_port;
 		storage_server.sock = -1;
 
 		callback_args.pContext = pContext;
@@ -760,8 +1146,8 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	bTrunkFile = IS_TRUNK_FILE_BY_ID(trunkInfo);
 	if (bTrunkFile)
 	{
-		trunk_get_full_filename(&trunkInfo, full_filename, \
-				sizeof(full_filename));
+		trunk_get_full_filename_ex(pStorePaths, &trunkInfo, \
+				full_filename, sizeof(full_filename));
 		full_filename_len = strlen(full_filename);
 		file_offset = TRUNK_FILE_START_OFFSET(trunkInfo) + \
 				pContext->range.start;
@@ -770,15 +1156,28 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 	{
 		full_filename_len = snprintf(full_filename, \
 				sizeof(full_filename), "%s/data/%s", \
-				g_fdfs_store_paths[store_path_index], \
+				pStorePaths->paths[store_path_index], \
 				true_filename);
 		file_offset = pContext->range.start;
 	}
 
-	response.content_length = download_bytes;
+	response.content_length = download_bytes + flv_header_len;
 	if (pContext->send_file != NULL && !bTrunkFile)
 	{
-		OUTPUT_HEADERS(pContext, (&response), HTTP_OK)
+		http_status = pContext->if_range ? \
+				HTTP_PARTIAL_CONTENT : HTTP_OK;
+		OUTPUT_HEADERS(pContext, (&response), http_status)
+
+		if (flv_header_len > 0)
+		{
+			if (pContext->send_reply_chunk(pContext->arg, \
+				false, flv_header, flv_header_len) != 0)
+			{
+				close(fd);
+				return HTTP_INTERNAL_SERVER_ERROR;
+			}
+		}
+
 		return pContext->send_file(pContext->arg, full_filename, \
 				full_filename_len, file_offset, download_bytes);
 	}
@@ -791,7 +1190,7 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 			logError("file: "__FILE__", line: %d, " \
 				"open file %s fail, " \
 				"errno: %d, error info: %s", __LINE__, \
-				full_filename, errno, strerror(errno));
+				full_filename, errno, STRERROR(errno));
 				OUTPUT_HEADERS(pContext, (&response), \
 						HTTP_SERVUNAVAIL)
 			return HTTP_SERVUNAVAIL;
@@ -828,31 +1227,40 @@ int fdfs_http_request_handler(struct fdfs_http_context *pContext)
 
 	OUTPUT_HEADERS(pContext, (&response), pContext->if_range ? \
                         HTTP_PARTIAL_CONTENT : HTTP_OK)
-
-	remain_bytes = download_bytes;
-	while (remain_bytes > 0)
+	if (flv_header_len > 0)
 	{
-		read_bytes = remain_bytes <= FDFS_OUTPUT_CHUNK_SIZE ? \
-			     remain_bytes : FDFS_OUTPUT_CHUNK_SIZE;
-		if (read(fd, file_trunk_buff, read_bytes) != read_bytes)
-		{
-			close(fd);
-			logError("file: "__FILE__", line: %d, " \
-				"read from file %s fail, " \
-				"errno: %d, error info: %s", __LINE__, \
-				full_filename, errno, strerror(errno));
-			return HTTP_INTERNAL_SERVER_ERROR;
-		}
-
-		remain_bytes -= read_bytes;
 		if (pContext->send_reply_chunk(pContext->arg, \
-			(remain_bytes == 0) ? 1: 0, file_trunk_buff, \
-			read_bytes) != 0)
+			false, flv_header, flv_header_len) != 0)
 		{
 			close(fd);
 			return HTTP_INTERNAL_SERVER_ERROR;
 		}
 	}
+
+    remain_bytes = download_bytes;
+    while (remain_bytes > 0)
+    {
+        read_bytes = remain_bytes <= FDFS_OUTPUT_CHUNK_SIZE ? \
+                     remain_bytes : FDFS_OUTPUT_CHUNK_SIZE;
+        if (read(fd, file_trunk_buff, read_bytes) != read_bytes)
+        {
+            close(fd);
+            logError("file: "__FILE__", line: %d, " \
+                    "read from file %s fail, " \
+                    "errno: %d, error info: %s", __LINE__, \
+                    full_filename, errno, STRERROR(errno));
+            return HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        remain_bytes -= read_bytes;
+        if (pContext->send_reply_chunk(pContext->arg, \
+                    (remain_bytes == 0) ? 1: 0, file_trunk_buff, \
+                    read_bytes) != 0)
+        {
+            close(fd);
+            return HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
 
 	close(fd);
 	return HTTP_OK;
@@ -875,9 +1283,17 @@ static int fdfs_get_params_from_tracker()
                         "storage_sync_file_max_delay", \
                         &iniContext, 24 * 3600);
 
+	use_storage_id = iniGetBoolValue(NULL, "use_storage_id", \
+				&iniContext, false);
         iniFreeContext(&iniContext);
 
-        return 0;
+	if (use_storage_id)
+	{
+		result = fdfs_get_storage_ids_from_tracker_group( \
+				&g_tracker_group);
+	}
+
+        return result;
 }
 
 static int fdfs_format_http_datetime(time_t t, char *buff, const int buff_size)
@@ -892,18 +1308,6 @@ static int fdfs_format_http_datetime(time_t t, char *buff, const int buff_size)
 	}
 
 	strftime(buff, buff_size, "%a, %d %b %Y %H:%M:%S GMT", ptm);
-	return 0;
-}
-
-static int fdfs_strtoll(const char *s, int64_t *value)
-{
-	char *end = NULL;
-	*value = strtoll(s, &end, 10);
-	if (end != NULL && *end != '\0')
-	{
-		return EINVAL;
-	}
-
 	return 0;
 }
 
