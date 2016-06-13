@@ -43,6 +43,7 @@ RUN \
     && curl -fSL https://ftp.csx.cam.ac.uk/pub/software/programming/pcre/pcre-${RESTY_PCRE_VERSION}.tar.gz -o pcre-${RESTY_PCRE_VERSION}.tar.gz \
     && tar xzf pcre-${RESTY_PCRE_VERSION}.tar.gz \
     && cd pcre-${RESTY_PCRE_VERSION} \
+    && ./configure
     && make \
     && make install \
     && cd /tmp \
