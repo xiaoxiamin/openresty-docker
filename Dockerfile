@@ -100,8 +100,6 @@ RUN echo "Installing..." \
 	libunwind-0.99-beta.tar.gz \
 	gperftools-2.1.tar.gz \
    && yum clean all \
-   && ls -al /etc/openresty/ \
-   && ls -al /usr/local/openresty \
    && ln -s /usr/local/lib/libiconv.so.2.5.0 /usr/lib64/libiconv.so.2 \
    && ln -s /usr/local/lib/libiconv.so.2.5.0 /usr/lib/libiconv.so.2 \
    && ln -s /usr/local/openresty/nginx/sbin/nginx /usr/local/bin/  
