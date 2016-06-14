@@ -15,14 +15,14 @@ RUN \
     && ./make.sh \
     && ./make.sh install \
  ##   安装FastDFS
-    && cd /tmp
+    && cd /tmp \
     && wget https://github.com/happyfish100/fastdfs/archive/V5.05.tar.gz \
     && tar -zxvf V5.05.tar.gz \
     && cd fastdfs-5.05/ \
     && ./make.sh \
     && ./make.sh install \
 #安装drizzle-lib1.0
-    && cd /tmp
+    && cd /tmp \
     && wget http://agentzh.org/misc/nginx/drizzle7-2011.07.21.tar.gz \
     && tar zxvf drizzle7-2011.07.21.tar.gz \
     && cd drizzle7-2011.07.21 \
