@@ -177,10 +177,7 @@ static void fdfs_output_headers(void *arg, struct fdfs_http_response *pResponse)
 		return;
 	}
 
-	pResponse->header_outputed = true;
-
 	r = (ngx_http_request_t *)arg;
-	r->headers_out.status = pResponse->status;
 
 	if (pResponse->status != HTTP_OK \
 	 && pResponse->status != HTTP_PARTIAL_CONTENT)
@@ -192,6 +189,10 @@ static void fdfs_output_headers(void *arg, struct fdfs_http_response *pResponse)
 				fdfs_set_range(r, pResponse);
 			}
 			fdfs_set_location(r, pResponse);
+		}
+		else
+		{
+			return;  //does not send http header for other status
 		}
 	}
 	else
@@ -216,6 +217,14 @@ static void fdfs_output_headers(void *arg, struct fdfs_http_response *pResponse)
 		}
 	}
 
+	ngx_http_set_content_type(r);
+
+	r->headers_out.status = pResponse->status;
+	pResponse->header_outputed = true;
+    if (pResponse->content_length <= 0)
+    {
+        r->header_only = 1;
+    }
 	rc = ngx_http_send_header(r);
 	if (rc == NGX_ERROR || rc > NGX_OK)
 	{
@@ -396,17 +405,55 @@ static ngx_int_t ngx_http_fastdfs_proxy_create_request(ngx_http_request_t *r)
 {
 #define FDFS_REDIRECT_PARAM  "redirect=1"
 
- 	size_t                        len;
+	size_t                        len;
 	ngx_buf_t                    *b;
 	ngx_uint_t                    i;
 	ngx_chain_t                  *cl;
 	ngx_list_part_t              *part;
 	ngx_table_elt_t              *header;
 	ngx_http_upstream_t          *u;
+  char *p;
+	char url[4096];
+  char *the_url;
+  size_t url_len;
+  bool have_query;
 
 	u = r->upstream;
+  if (r->valid_unparsed_uri)
+  {
+    the_url = (char *)r->unparsed_uri.data;
+    url_len = r->unparsed_uri.len;
+    have_query = memchr(the_url, '?', url_len) != NULL;
+  }
+  else
+  {
+    if (r->uri.len + r->args.len + 1 >= sizeof(url))
+    {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
+          "url too long, exceeds %d bytes!", (int)sizeof(url));
+      return NGX_ERROR;
+    }
 
-	len = r->method_name.len + 1 + r->unparsed_uri.len + 1 + 
+    p = url;
+    memcpy(p, r->uri.data, r->uri.len);
+    p += r->uri.len;
+    if (r->args.len > 0)
+    {
+      *p++ = '?';
+      memcpy(p, r->args.data, r->args.len);
+      p += r->args.len;
+      have_query = true;
+    }
+    else
+    {
+      have_query = false;
+    }
+
+    the_url = url;
+    url_len = p - url;
+  }
+
+	len = r->method_name.len + 1 + url_len + 1 + 
 		sizeof(FDFS_REDIRECT_PARAM) - 1 + 1 + 
 		sizeof(ngx_http_fastdfs_proxy_version) - 1 + sizeof(CRLF) - 1;
 
@@ -450,9 +497,9 @@ static ngx_int_t ngx_http_fastdfs_proxy_create_request(ngx_http_request_t *r)
 	*b->last++ = ' ';
 
 	u->uri.data = b->last;
-	b->last = ngx_cpymem(b->last, r->unparsed_uri.data, r->unparsed_uri.len);
+	b->last = ngx_cpymem(b->last, the_url, url_len);
 
-	if (strchr((char *)r->unparsed_uri.data, '?') != NULL)
+	if (have_query)
 	{
 		*b->last++ = '&';
 	}
@@ -606,13 +653,15 @@ static ngx_int_t ngx_http_fastdfs_proxy_process_status_line(ngx_http_request_t *
 
 static ngx_int_t ngx_http_fastdfs_proxy_process_header(ngx_http_request_t *r)
 {
-    ngx_int_t        rc;
-    ngx_table_elt_t  *h;
+    ngx_int_t                       rc;
+    ngx_table_elt_t                *h;
+    ngx_http_upstream_header_t     *hh;
+    ngx_http_upstream_main_conf_t  *umcf;
+
+    umcf = ngx_http_get_module_main_conf(r, ngx_http_upstream_module);
 
     for ( ;; ) {
-
         rc = ngx_http_parse_header_line(r, &r->upstream->buffer, 1);
-
         if (rc == NGX_OK) {
 
             /* a header line has been parsed successfully */
@@ -636,15 +685,28 @@ static ngx_int_t ngx_http_fastdfs_proxy_process_header(ngx_http_request_t *r)
             h->value.data = h->key.data + h->key.len + 1;
             h->lowcase_key = h->key.data + h->key.len + 1 + h->value.len + 1;
 
-            ngx_cpystrn(h->key.data, r->header_name_start, h->key.len + 1);
-            ngx_cpystrn(h->value.data, r->header_start, h->value.len + 1);
+            ngx_memcpy(h->key.data, r->header_name_start, h->key.len);
+            h->key.data[h->key.len] = '\0';
+            ngx_memcpy(h->value.data, r->header_start, h->value.len);
+            h->value.data[h->value.len] = '\0';
 
             if (h->key.len == r->lowcase_index) {
                 ngx_memcpy(h->lowcase_key, r->lowcase_header, h->key.len);
-
             } else {
                 ngx_strlow(h->lowcase_key, h->key.data, h->key.len);
             }
+
+            hh = ngx_hash_find(&umcf->headers_in_hash, h->hash,
+                               h->lowcase_key, h->key.len);
+            if (hh && hh->handler(r, h, hh->offset) != NGX_OK) {
+                return NGX_ERROR;
+            }
+
+            /*
+            ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "http proxy header: \"%V: %V\"",
+                           &h->key, &h->value);
+            */
 
             continue;
         }
@@ -652,7 +714,10 @@ static ngx_int_t ngx_http_fastdfs_proxy_process_header(ngx_http_request_t *r)
         if (rc == NGX_HTTP_PARSE_HEADER_DONE) {
 
             /* a whole header has been parsed successfully */
-
+            /*
+            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "http proxy header done");
+            */
             /*
              * if no "Server" and "Date" in header line,
              * then add the special empty headers
@@ -685,6 +750,13 @@ static ngx_int_t ngx_http_fastdfs_proxy_process_header(ngx_http_request_t *r)
                 h->lowcase_key = (u_char *) "date";
             }
 
+            /* clear content length if response is chunked */
+	    /*
+            if (r->upstream->headers_in.chunked) {
+                r->upstream->headers_in.content_length_n = -1;
+            }
+	    */
+
             return NGX_OK;
         }
 
@@ -693,7 +765,6 @@ static ngx_int_t ngx_http_fastdfs_proxy_process_header(ngx_http_request_t *r)
         }
 
         /* there was error while a header line parsing */
-
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "upstream sent invalid header");
 
@@ -780,11 +851,11 @@ static ngx_int_t ngx_http_fastdfs_handler(ngx_http_request_t *r)
 {
 	struct fdfs_http_context context;
 	ngx_int_t rc;
-	size_t     root_length;  
-	ngx_str_t  path;
+	char url[4096];
+	char *p;
 
 	if (!(r->method & (NGX_HTTP_GET | NGX_HTTP_HEAD))) {
-       		return NGX_HTTP_NOT_ALLOWED;
+		return NGX_HTTP_NOT_ALLOWED;
 	}
 
 	rc = ngx_http_discard_request_body(r);
@@ -793,20 +864,28 @@ static ngx_int_t ngx_http_fastdfs_handler(ngx_http_request_t *r)
 		return rc;
 	}
 
-	if (ngx_http_map_uri_to_path(r, &path, &root_length, 0) == NULL)
+	if (r->uri.len + r->args.len + 1 >= sizeof(url))
 	{
 		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, 
-			"call ngx_http_map_uri_to_path fail");
-        	return NGX_HTTP_INTERNAL_SERVER_ERROR;
+			"url too long, exceeds %d bytes!", (int)sizeof(url));
+		return HTTP_BADREQUEST;
 	}
-	*(path.data + root_length) = '\0';
-	*(r->unparsed_uri.data + r->unparsed_uri.len) = '\0';
+
+	p = url;
+	memcpy(p, r->uri.data, r->uri.len);
+	p += r->uri.len;
+	if (r->args.len > 0)
+	{
+		*p++ = '?';
+		memcpy(p, r->args.data, r->args.len);
+		p += r->args.len;
+	}
+	*p = '\0';
 
 	memset(&context, 0, sizeof(context));
 	context.arg = r;
-	context.header_only = r->header_only;
-	context.url = (char *)r->unparsed_uri.data;
-	context.document_root = (char *)path.data;
+	context.header_only = (r->method & NGX_HTTP_HEAD) ? 1 : 0;
+	context.url = url;
 	context.output_headers = fdfs_output_headers;
 	context.send_file = fdfs_send_file;
 	context.send_reply_chunk = fdfs_send_reply_chunk;
@@ -823,6 +902,11 @@ static ngx_int_t ngx_http_fastdfs_handler(ngx_http_request_t *r)
 				r->headers_in.if_modified_since->value.data, \
 				r->headers_in.if_modified_since->value.len);
 		}
+
+		/*
+		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
+			"if_modified_since: %s", context.if_modified_since);
+		*/
 	}
 
 	if (r->headers_in.range != NULL)
@@ -843,6 +927,7 @@ static ngx_int_t ngx_http_fastdfs_handler(ngx_http_request_t *r)
 		memcpy(buff, r->headers_in.range->value.data, \
 				r->headers_in.range->value.len);
 		*(buff + r->headers_in.range->value.len) = '\0';
+		//ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "buff=%s", buff);
 		if (fdfs_parse_range(buff, &(context.range)) != 0)
 		{
 			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
@@ -850,14 +935,25 @@ static ngx_int_t ngx_http_fastdfs_handler(ngx_http_request_t *r)
 			return NGX_HTTP_BAD_REQUEST;
 		}
 		context.if_range = true;
+
+		/*
+		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
+			"if_range=%d, start=%d, end=%d", context.if_range, \
+			(int)context.range.start, (int)context.range.end);
+		*/
 	}
+
+	/*
+	ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, \
+			"args=%*s, uri=%*s", r->args.len, r->args.data, \
+			r->uri.len, r->uri.data);
+	*/
 
 	return fdfs_http_request_handler(&context);
 }
 
 static char *ngx_http_fastdfs_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
-	int result;
 	ngx_http_core_loc_conf_t *clcf = ngx_http_conf_get_module_loc_conf(cf, \
 						ngx_http_core_module);
 
@@ -866,19 +962,21 @@ static char *ngx_http_fastdfs_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf
 	/* register hanlder */
 	clcf->handler = ngx_http_fastdfs_handler;
 
-	if ((result=fdfs_mod_init()) != 0)
-	{
-		return NGX_CONF_ERROR;
-	}
-
 	return NGX_CONF_OK;
 }
 
 static ngx_int_t ngx_http_fastdfs_process_init(ngx_cycle_t *cycle)
 {
-    fprintf(stderr, "ngx_http_fastdfs_process_init pid=%d\n", getpid());
-    // do some init here
-    return NGX_OK;
+	int result;
+
+	fprintf(stderr, "ngx_http_fastdfs_process_init pid=%d\n", getpid());
+	// do some init here
+	if ((result=fdfs_mod_init()) != 0)
+	{
+		return NGX_ERROR;
+	}
+
+	return NGX_OK;
 }
 
 static void ngx_http_fastdfs_process_exit(ngx_cycle_t *cycle)

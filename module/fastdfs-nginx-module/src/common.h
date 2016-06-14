@@ -99,7 +99,6 @@ struct fdfs_http_context {
 	bool if_range;
 	struct fdfs_http_range range;
 	char if_modified_since[32];
-	const char *document_root;
 	char *url;
 	void *arg; //for callback
 	FDFSOutputHeaders output_headers;
