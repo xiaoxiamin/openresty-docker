@@ -7,6 +7,7 @@ RUN yum install -y readline readline-devel GeoIP GeoIP-devel ruby intltool libcu
 	make gmake cmake gcc gcc-c++ \
 	libgcrypt-devel pam-devel libuuid-devel zlib-devel boost-devel automake openldap-devel \
 	pcre-devel protobuf-compiler protobuf-devel openssl openssl-devel gd gd-devel \
+	yajl yajl-devel libunwind libunwind-devel gperftools \
 	wget which file unzip
 
 COPY module /tmp/module 
@@ -14,7 +15,7 @@ COPY module /tmp/module
 #安装依赖库
 RUN echo "Installing..." \
   #安装drizzle-lib1.0
-    && echo "Installing drizzle-lib..." \
+    && echo "Installing libdrizzle-1.0..." \
     && cd /tmp \
     && wget http://agentzh.org/misc/nginx/drizzle7-2011.07.21.tar.gz \
     && tar zxvf drizzle7-2011.07.21.tar.gz \
@@ -24,38 +25,6 @@ RUN echo "Installing..." \
     && make install-libdrizzle-1.0 \
     && ln -s /usr/local/lib/libdrizzle.so.1 /usr/lib/libdrizzle.so.1 \
     && ln -s /usr/local/lib/libdrizzle.so.1 /usr/lib64/libdrizzle.so.1 \
-  #安装yajl
-    && echo "Installing yajl..." \
-    && cd /tmp \
-    && wget http://pkgs.fedoraproject.org/repo/pkgs/yajl/lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz/df6a751e7797b9c2182efd91b5d64017/lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz \
-    && tar zxvf lloyd-yajl-2.0.1-0-gf4b2b1a.tar.gz \
-    && cd lloyd-yajl-f4b2b1a \
-    && ./configure \
-    && make \
-    && make install \
-    && ln -s /usr/local/lib/libyajl.so.2 /usr/lib/libyajl.so.2 \
-    && ln -s /usr/local/lib/libyajl.so.2 /usr/lib64/libyajl.so.2 \
-    && cd /tmp \
-  #安装libunwind0.99beta
-    && wget http://download.savannah.gnu.org/releases/libunwind/libunwind-0.99-beta.tar.gz \
-    && tar zxvf libunwind-0.99-beta.tar.gz \
-    && cd libunwind-0.99-beta \
-    && ./configure \
-    && make \
-    && make install \
-    && echo "/usr/local/lib" > /etc/ld.so.conf.d/usr_local_lib.conf \
-    && ldconfig \
-  #安装google-perftools(2.1)
-    && echo "Installing google-perftools..." \
-    && cd /tmp \
-    && wget https://gperftools.googlecode.com/files/gperftools-2.1.tar.gz \
-    && tar zxvf gperftools-2.1.tar.gz \
-    && cd gperftools-2.1 \
-    && ./configure --enable-shared --enable-frame-pointers --prefix=/usr/local/gperftools \
-    && make \
-    && make install \
-    && ln -s /usr/local/gperftools/lib/lib* /usr/lib \
-    && ln -s /usr/local/gperftools/lib/lib* /usr/local/lib \
   #安装 libfastcommon
     && echo "Installing libfastcommon..." \
     && wget https://github.com/happyfish100/libfastcommon/archive/master.zip \
