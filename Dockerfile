@@ -1,16 +1,14 @@
 FROM centos:7
 # Docker Build Arguments
 ARG RESTY_VERSION="1.9.7.4"
-ARG RESTY_CONFIG_OPTIONS="--user=nobody --group=nobody --prefix=/usr/local/openresty --conf-path=/etc/openresty/nginx/nginx.conf --pid-path=/var/run/nginx.pid --error-log-path=/var/log/nginx/error.log --with-luajit --with-http_flv_module --with-http_gzip_static_module --with-http_mp4_module --with-http_image_filter_module --with-http_stub_status_module --with-http_ssl_module --with-http_realip_module --with-debug --with-http_geoip_module --with-http_drizzle_module --with-http_iconv_module --add-module=../module/nginx_concat_module --add-module=../module/nginx_mogilefs_module-1.0.4 --add-module=../module/nginx-rtmp-module-master --add-module=../module/ngx_cache_purge-2.3 --add-module=../module/ngx_mongo-master --add-module=../module/fastdfs-nginx-module-master/src"
+ARG RESTY_CONFIG_OPTIONS="--user=nobody --group=nobody --prefix=/usr/local/openresty --conf-path=/etc/openresty/nginx/nginx.conf --pid-path=/var/run/nginx.pid --error-log-path=/var/log/nginx/error.log --with-luajit --with-http_flv_module --with-http_gzip_static_module --with-http_mp4_module --with-http_image_filter_module --with-http_stub_status_module --with-http_ssl_module --with-http_realip_module --with-debug --with-http_geoip_module --with-http_drizzle_module --with-http_iconv_module --add-module=../module/nginx-http-concat --add-module=../module/nginx-mogilefs-module --add-module=../module/nginx-rtmp-module --add-module=../module/ngx_cache_purge --add-module=../module/ngx_mongo --add-module=../module/fastdfs-nginx-module/src"
 
 RUN yum install -y readline readline-devel GeoIP GeoIP-devel ruby intltool libcurl-devel \
-	make gmake cmake gcc gcc-c++ \
+	make gmake cmake gcc gcc-c++ git \
 	libgcrypt-devel pam-devel libuuid-devel zlib-devel boost-devel automake openldap-devel \
 	pcre-devel protobuf-compiler protobuf-devel openssl openssl-devel gd gd-devel \
 	yajl yajl-devel libunwind libunwind-devel gperftools \
 	wget which file unzip
-
-COPY module /tmp/module 
 
 #安装依赖库
 RUN cd /tmp \
@@ -54,6 +52,20 @@ RUN cd /tmp \
     && wget -O fastdfs-nginx-module-master.zip https://github.com/happyfish100/fastdfs-nginx-module/archive/master.zip \
     && unzip fastdfs-nginx-module-master.zip -d ./module/ \
     && mkdir -p /etc/fdfs/ && cp ./module/fastdfs-nginx-module-master/src/mod_fastdfs.conf /etc/fdfs/ \
+    && sed -i 's/load_fdfs_parameters_from_tracker=true/load_fdfs_parameters_from_tracker=false/g' /etc/fdfs/mod_fastdfs.conf \
+    && popd \
+  #下载所需 nginx 模块
+    && echo "Downloading *-nginx-module..." \
+    && pushd . \
+    && mkdir -p module \
+    && cd module \
+    && git clone https://github.com/happyfish100/fastdfs-nginx-module.git \
+    #&& git clone https://github.com/cep21/healthcheck_nginx_upstreams.git \
+    && git clone https://github.com/arut/nginx-rtmp-module.git \
+    && git clone https://github.com/alibaba/nginx-http-concat.git \
+    && git clone https://github.com/vkholodkov/nginx-mogilefs-module.git \
+    && git clone https://github.com/FRiCKLE/ngx_cache_purge.git \
+    && git clone https://github.com/simpl/ngx_mongo.git \
     && popd \
   #安装openresty
     && echo "Installing openresty-${RESTY_VERSION}..." \
@@ -68,6 +80,7 @@ RUN cd /tmp \
     && rm -rf openresty-* \
   #打扫环境
     && echo "Cleaning ..." \
+    && rm -rf module \
     && ls -al /tmp \
     && yum clean all \
     && ln -s /usr/local/openresty/nginx/sbin/nginx /usr/local/bin/  
