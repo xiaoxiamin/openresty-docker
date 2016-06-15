@@ -90,6 +90,7 @@ ADD nginx.conf /etc/openresty/nginx/
 RUN rm -vf /etc/openresty/nginx/conf.d
 ADD conf.d /etc/openresty/nginx/conf.d
 RUN echo "daemon off;" >> /etc/openresty/nginx/nginx.conf
+ADD ./html /usr/share/nginx/html
 EXPOSE 80 
 ENV PATH /usr/local/nginx/bin:$PATH 
 VOLUME [ "/usr/local/openresty/html"]
