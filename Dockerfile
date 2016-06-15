@@ -1,17 +1,13 @@
 FROM centos:7
-# Docker Build Arguments
-ARG RESTY_VERSION="1.9.7.4"
-ARG RESTY_CONFIG_OPTIONS="--user=nobody --group=nobody --prefix=/usr/local/openresty --conf-path=/etc/openresty/nginx/nginx.conf --pid-path=/var/run/nginx.pid --error-log-path=/var/log/nginx/error.log --with-luajit --with-http_flv_module --with-http_gzip_static_module --with-http_mp4_module --with-http_image_filter_module --with-http_stub_status_module --with-http_ssl_module --with-http_realip_module --with-debug --with-http_geoip_module --with-http_drizzle_module --with-http_iconv_module --add-module=../module/nginx-http-concat --add-module=../module/nginx-mogilefs-module --add-module=../module/nginx-rtmp-module --add-module=../module/ngx_cache_purge --add-module=../module/ngx_mongo --add-module=../module/fastdfs-nginx-module/src"
 
-RUN yum install -y readline readline-devel GeoIP GeoIP-devel ruby intltool libcurl-devel \
-	make gmake cmake gcc gcc-c++ git \
-	libgcrypt-devel pam-devel libuuid-devel zlib-devel boost-devel automake openldap-devel \
-	pcre-devel protobuf-compiler protobuf-devel openssl openssl-devel gd gd-devel \
-	yajl yajl-devel libunwind libunwind-devel gperftools \
-	wget which file unzip
-
-#安装依赖库
-RUN cd /tmp \
+  #安装依赖
+RUN buildDeps='make cmake automake intltool gcc gcc-c++ ruby git \
+	readline-devel GeoIP-devel libcurl-devel libgcrypt-devel pam-devel libuuid-devel zlib-devel \
+	boost-devel pcre-devel protobuf-compiler protobuf-devel openssl-devel gd-devel \
+	yajl-devel libunwind-devel wget which file unzip' \
+    && runDeps='GeoIP openssl gd yajl libunwind gperftools openldap-devel' \
+    && yum install -y ${buildDeps} ${runDeps} \
+    && cd /tmp \
   #安装drizzle-lib1.0
     && echo "Installing libdrizzle-1.0..." \
     && pushd . \
@@ -68,12 +64,35 @@ RUN cd /tmp \
     && git clone https://github.com/simpl/ngx_mongo.git \
     && popd \
   #安装openresty
+    && RESTY_VERSION="1.9.7.4" \
     && echo "Installing openresty-${RESTY_VERSION}..." \
     && pushd . \
     && curl -fSL https://openresty.org/download/openresty-${RESTY_VERSION}.tar.gz -o openresty-${RESTY_VERSION}.tar.gz \
     && tar xzf openresty-${RESTY_VERSION}.tar.gz \
     && cd openresty-${RESTY_VERSION} \
-    && ./configure ${RESTY_CONFIG_OPTIONS} \
+    && ./configure --user=nobody --group=nobody \
+	--prefix=/usr/local/openresty \
+	--conf-path=/etc/openresty/nginx/nginx.conf \
+	--pid-path=/var/run/nginx.pid \
+	--error-log-path=/var/log/nginx/error.log \
+	--with-luajit \
+	--with-http_flv_module \
+	--with-http_gzip_static_module \
+	--with-http_mp4_module \
+	--with-http_image_filter_module \
+	--with-http_stub_status_module \
+	--with-http_ssl_module \
+	--with-http_realip_module \
+	--with-debug \
+	--with-http_geoip_module \
+	--with-http_drizzle_module \
+	--with-http_iconv_module \
+	--add-module=../module/nginx-http-concat \
+	--add-module=../module/nginx-mogilefs-module \
+	--add-module=../module/nginx-rtmp-module \
+	--add-module=../module/ngx_cache_purge \
+	--add-module=../module/ngx_mongo \
+	--add-module=../module/fastdfs-nginx-module/src\
     && gmake \
     && gmake install \
     && popd \
@@ -82,16 +101,18 @@ RUN cd /tmp \
     && echo "Cleaning ..." \
     && rm -rf module \
     && ls -al /tmp \
+    && yum remove -y ${buildDeps} \
+    && yum autoremove -y \
     && yum clean all \
-    && ln -s /usr/local/openresty/nginx/sbin/nginx /usr/local/bin/  
+    && ln -s /usr/local/openresty/nginx/sbin/nginx /usr/local/bin/ \
+    && rm -vf /etc/openresty/nginx.conf \
+    && rm -vf /etc/openresty/nginx/conf.d
+
 WORKDIR /usr/local/openresty
-RUN rm -vf /etc/openresty/nginx.conf
 ADD nginx.conf /etc/openresty/nginx/
-RUN rm -vf /etc/openresty/nginx/conf.d
 ADD conf.d /etc/openresty/nginx/conf.d
-RUN echo "daemon off;" >> /etc/openresty/nginx/nginx.conf
 ADD ./html /usr/share/nginx/html
 EXPOSE 80 
-ENV PATH /usr/local/nginx/bin:$PATH 
+#ENV PATH /usr/local/nginx/bin:$PATH 
 VOLUME [ "/usr/local/openresty/html"]
 CMD nginx
