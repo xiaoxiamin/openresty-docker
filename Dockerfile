@@ -109,10 +109,7 @@ RUN buildDeps='make cmake automake intltool gcc gcc-c++ ruby git \
     && rm -vf /etc/openresty/nginx/conf.d
 
 WORKDIR /usr/local/openresty
-ADD nginx.conf /etc/openresty/nginx/
-ADD conf.d /etc/openresty/nginx/conf.d
-ADD ./html /usr/share/nginx/html
+ADD nginx.conf /etc/openresty/nginx.conf
 EXPOSE 80 
 #ENV PATH /usr/local/nginx/bin:$PATH 
-VOLUME [ "/usr/local/openresty/html"]
 CMD nginx
