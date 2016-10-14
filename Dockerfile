@@ -72,7 +72,7 @@ RUN buildDeps='make cmake automake intltool gcc gcc-c++ ruby git \
     && cd openresty-${RESTY_VERSION} \
     && ./configure --user=nobody --group=nobody \
 	--prefix=/usr/local/openresty \
-	--conf-path=/etc/openresty/nginx/nginx.conf \
+	--conf-path=/etc/openresty/nginx.conf \
 	--pid-path=/var/run/nginx.pid \
 	--error-log-path=/var/log/nginx/error.log \
 	--with-luajit \
@@ -95,8 +95,6 @@ RUN buildDeps='make cmake automake intltool gcc gcc-c++ ruby git \
 	--add-module=../module/fastdfs-nginx-module/src\
     && gmake \
     && gmake install \
-    && popd \
-    && rm -rf openresty-* \
   #打扫环境
     && echo "Cleaning ..." \
     && rm -rf module \
@@ -105,8 +103,11 @@ RUN buildDeps='make cmake automake intltool gcc gcc-c++ ruby git \
     && yum autoremove -y \
     && yum clean all \
     && ln -s /usr/local/openresty/nginx/sbin/nginx /usr/local/bin/ \
-    && rm -vf /etc/openresty/nginx.conf \
-    && rm -vf /etc/openresty/nginx/conf.d
+    && rm -rf /etc/openresty/nginx.conf \
+    && rm -rf /etc/openresty/conf.d \
+    && mkdir /etc/openresty/conf.d \
+    && ln -sf /dev/stderr /var/log/nginx/error.log \
+    && ln -sf /dev/stdout /var/log/nginx/access.log
 
 WORKDIR /usr/local/openresty
 ADD nginx.conf /etc/openresty/nginx.conf
