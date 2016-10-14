@@ -107,7 +107,9 @@ RUN buildDeps='make cmake automake intltool gcc gcc-c++ ruby git \
     && rm -rf /etc/openresty/conf.d \
     && mkdir /etc/openresty/conf.d \
     && ln -sf /dev/stderr /var/log/nginx/error.log \
-    && ln -sf /dev/stdout /var/log/nginx/access.log
+    && ln -sf /dev/stdout /var/log/nginx/access.log \
+    && groupadd www \
+    && useradd -s /sbin/nologin -g www www
 
 WORKDIR /usr/local/openresty
 ADD nginx.conf /etc/openresty/nginx.conf
